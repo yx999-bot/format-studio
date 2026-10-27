@@ -1,0 +1,18 @@
+# 构建产物与校验产物
+dist/
+test/out/
+test/out-cli/
+test/out-desktop/
+test/*.json
+test/*.log
+test/gui-*.png
+desktop/icon-preview.png
+
+# Office 渲染临时目录
+.dsh-office-*/
+
+# 依赖与系统垃圾
+node_modules/
+Thumbs.db
+desktop.ini
+*.tmp
