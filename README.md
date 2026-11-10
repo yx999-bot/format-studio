@@ -12,6 +12,21 @@
 
 ---
 
+## 下载
+
+Windows 独立版（约 88 KB，双击即用，不需要安装任何运行环境）：
+
+| 方式 | 链接 |
+| --- | --- |
+| GitHub Release（官方） | <https://github.com/yx999-bot/format-studio/releases/download/v1.0.0/FormatStudio.exe> |
+| CDN 直链（国内访问更稳） | <https://cdn.jsdelivr.net/gh/yx999-bot/format-studio@main/download/FormatStudio.exe> |
+
+SHA256（v1.0.0）：`1E1795B8C9041331A0D9CBF776426AF3D5B55B3BF71907E7B08F2E52D868E3BF`
+
+> 网址直接发给朋友就能下载；如果对方网络打不开 GitHub，用上面那个 CDN 直链，或者把 `download/FormatStudio.exe` 这个文件直接发过去（微信/QQ 传文件即可）。
+
+---
+
 ## 它解决什么问题
 
 网上复制来的材料、手写的汇报、AI 生成的初稿，往往只有段落文字：标题不居中、没有层级、首行不缩进、行距混乱。
