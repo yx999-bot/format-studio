@@ -534,20 +534,25 @@ window.__ModuleLoader__.load({
 
         // Numbered headings. When the numbered line runs straight into body text
         // ("（一）加强组织领导。各区县……"), the whole paragraph is body text, not a
-        // heading; only short numbered lines count as headings.
-        const INLINE_HEADING_MAX = 40;
-        const numberedKind = (() => {
-          if (RE_CHAPTER.test(para)) return 'h1';
-          if (RE_H1.test(para)) return 'h1';
-          if (RE_H2.test(para)) return 'h2';
-          if (RE_H4.test(para)) return 'h4';
-          if (RE_H3.test(para) && para.length <= 60) return 'h3';
+        // heading: only a short remainder after the number counts as a heading.
+        const HEADING_REST_MAX = 20;
+        const numbered = (() => {
+          const chapter = para.match(RE_CHAPTER);
+          if (chapter) return { kind: 'h1', rest: chapter[2].length };
+          const h1 = para.match(RE_H1);
+          if (h1) return { kind: 'h1', rest: h1[2].length };
+          const h2 = para.match(RE_H2);
+          if (h2) return { kind: 'h2', rest: h2[2].length };
+          const h4 = para.match(RE_H4);
+          if (h4) return { kind: 'h4', rest: h4[2].length };
+          const h3 = para.match(RE_H3);
+          if (h3) return { kind: 'h3', rest: h3[2].length };
           return null;
         })();
-        if (numberedKind) {
-          if (para.length <= INLINE_HEADING_MAX) {
-            blocks.push({ kind: numberedKind, text: para });
-            if (numberedKind === 'h1' && !sawTitle) sawTitle = true;
+        if (numbered) {
+          if (numbered.rest <= HEADING_REST_MAX) {
+            blocks.push({ kind: numbered.kind, text: para });
+            if (numbered.kind === 'h1' && !sawTitle) sawTitle = true;
             continue;
           }
           blocks.push({ kind: 'body', text: para });
@@ -596,7 +601,8 @@ window.__ModuleLoader__.load({
 
         const bullet = para.match(RE_BULLET);
         if (bullet) {
-          blocks.push({ kind: 'list', text: '· ' + bullet[1] });
+          // 保留原文，不额外插入「·」之类的符号（用户没打的东西不出现）
+          blocks.push({ kind: 'list', text: para });
           continue;
         }
 
@@ -633,6 +639,244 @@ window.__ModuleLoader__.load({
       return { blocks, stats };
     }
 
+    // ---- src/punctuation.mjs ----
+    /**
+     * 中文标点规范化。
+     *
+     * 把从英文输入法、AI 生成、PDF 复制来的半角标点，改成手打中文时会用的全角
+     * 标点，同时不破坏英文句子、数字、网址、编号和引用标记。
+     *
+     * 规则：
+     *   1. 只在中文字符（汉字）附近转换，纯英文行里逗号句号保持原样；
+     *   2. URL、邮箱、Windows 路径、行内代码、[1] / [2-3] 引用标记整段跳过；
+     *   3. 1.2 / 3.5% / 12:30 这类数字上下文不转换；
+     *   4. 行首的 1. / 2) / （1）/ 一、 编号不转换（它们是结构，不是标点）；
+     *   5. 引号按上下文成对变成 “ ”，省略号 ... → ……，破折号 -- → ——。
+     */
+
+    const PU_CJK_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
+    function puIsCjk(ch) {
+      return typeof ch === 'string' && ch.length > 0 && PU_CJK_RE.test(ch);
+    }
+
+    function puIsDigit(ch) {
+      return ch >= '0' && ch <= '9';
+    }
+
+    function puIsAsciiLetter(ch) {
+      return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+    }
+
+    function puIsBoundary(ch) {
+      return ch === '' || ch === '\n' || ch === '\r';
+    }
+
+    /** 左侧最近的字符（跳过空格，遇到换行/开头视为空）。 */
+    function puPrevChar(text, index) {
+      let i = index - 1;
+      while (i >= 0 && (text[i] === ' ' || text[i] === '\t')) i -= 1;
+      if (i < 0) return '';
+      return puIsBoundary(text[i]) ? '' : text[i];
+    }
+
+    /** 右侧最近的字符（跳过空格，遇到换行/结尾视为空）。 */
+    function puNextChar(text, index) {
+      let i = index + 1;
+      while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i += 1;
+      if (i >= text.length) return '';
+      return puIsBoundary(text[i]) ? '' : text[i];
+    }
+
+    /** 每行是否含汉字（纯英文行不做标点替换）。 */
+    function puBuildLineFlags(text) {
+      const flags = new Uint8Array(text.length);
+      let start = 0;
+      while (start <= text.length) {
+        let end = text.indexOf('\n', start);
+        if (end === -1) end = text.length;
+        let hasCjk = false;
+        for (let i = start; i < end; i += 1) {
+          if (PU_CJK_RE.test(text[i])) { hasCjk = true; break; }
+        }
+        for (let i = start; i < end; i += 1) flags[i] = hasCjk ? 1 : 0;
+        start = end + 1;
+      }
+      return flags;
+    }
+
+    const PU_PROTECTED = [
+      { pattern: /https?:\/\/[^\s，。；）)]+/g, trim: ',.;:!?' },
+      { pattern: /www\.[A-Za-z0-9.-]+/g, trim: ',.;:!?' },
+      { pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, trim: ',.;:!?' },
+      { pattern: /[A-Za-z]:\\[^\s]+/g, trim: ',.;:!?' },
+      { pattern: /`[^`\n]*`/g, trim: '' },
+      { pattern: /\[\s*\d{1,3}(?:\s*[-–—,，]\s*\d{1,3})*\s*\]/g, trim: '' },
+      { pattern: /^[ \t]*\d{1,2}[.)][ \t]?/gm, trim: '' },
+      { pattern: /^[ \t]*[（(]\s*\d{1,2}\s*[)）]/gm, trim: '' },
+      { pattern: /^[ \t]*[一二三四五六七八九十]{1,3}[、.．]/gm, trim: '' },
+      { pattern: /^[ \t]*#{1,6}[ \t]/gm, trim: '' },
+    ];
+
+    /** 标出不能碰的区域。 */
+    function puBuildProtectedMask(text) {
+      const mask = new Uint8Array(text.length);
+      for (const item of PU_PROTECTED) {
+        const pattern = item.pattern;
+        pattern.lastIndex = 0;
+        let match = pattern.exec(text);
+        while (match) {
+          let start = match.index;
+          let end = Math.min(text.length, start + match[0].length);
+          while (end > start && item.trim.indexOf(text[end - 1]) >= 0) end -= 1;
+          for (let i = start; i < end; i += 1) mask[i] = 1;
+          match = pattern.exec(text);
+        }
+      }
+      return mask;
+    }
+
+    const PU_OPEN_BEFORE = new Set(['（', '【', '《', '「', '『', '“', '‘', '，', '。', '：', '；', '、']);
+    const PU_COLON_AFTER = new Set(['"', '\'', '“', '‘', '（', '《', '【', '「']);
+
+    /**
+     * 规范化标点。
+     * @param {string} input 原文
+     * @param {{punctuation?: boolean, quotes?: boolean}} options
+     * @returns {{text: string, changes: number}}
+     */
+    function normalizePunctuation(input, options = {}) {
+      const source = String(input == null ? '' : input);
+      if (source.length === 0) return { text: source, changes: 0 };
+
+      const mask = puBuildProtectedMask(source);
+      const cjkLines = puBuildLineFlags(source);
+      const out = [];
+      let changes = 0;
+      let quoteOpen = false;
+      let singleOpen = false;
+      let i = 0;
+
+      /** 输出替换标点，并吃掉它后面多余的半角空格。 */
+      const emit = (replacement, from, consumed) => {
+        out.push(replacement);
+        changes += 1;
+        let next = from + consumed;
+        let probe = next;
+        while (probe < source.length && (source[probe] === ' ' || source[probe] === '\t')) probe += 1;
+        const after = probe < source.length ? source[probe] : '';
+        if (probe > next && (after === '' || puIsCjk(after) || after === '\n' || after === '\r')) next = probe;
+        return next;
+      };
+
+      while (i < source.length) {
+        const ch = source[i];
+
+        if (ch === '\n' || ch === '\r') {
+          quoteOpen = false;
+          singleOpen = false;
+          out.push(ch);
+          i += 1;
+          continue;
+        }
+        if (mask[i] === 1) {
+          out.push(ch);
+          i += 1;
+          continue;
+        }
+
+        const prev = puPrevChar(source, i);
+        const next = puNextChar(source, i);
+        const prevCjk = puIsCjk(prev);
+        const nextCjk = puIsCjk(next);
+        const nearCjk = prevCjk || nextCjk;
+        const inCjkLine = cjkLines[i] === 1;
+
+        // ---- 多字符：省略号 / 破折号 ----
+        if (ch === '.' && source.startsWith('...', i)) {
+          if (nearCjk || (inCjkLine && (next === '' || puIsCjk(source[i + 3] || '')))) {
+            i = emit('……', i, 3);
+            continue;
+          }
+        }
+        if (ch === '-' && source.startsWith('--', i)) {
+          if (nearCjk || (inCjkLine && puIsCjk(source[i + 2] || ''))) {
+            i = emit('——', i, 2);
+            continue;
+          }
+        }
+
+        // ---- 单字符 ----
+        switch (ch) {
+          case ',':
+            if (nearCjk) { i = emit('，', i, 1); continue; }
+            break;
+          case ';':
+            if (nearCjk) { i = emit('；', i, 1); continue; }
+            break;
+          case ':':
+            if (prevCjk && (nextCjk || next === '' || PU_COLON_AFTER.has(next))) {
+              i = emit('：', i, 1);
+              continue;
+            }
+            break;
+          case '?':
+            if (prevCjk || (nextCjk && prev === '')) { i = emit('？', i, 1); continue; }
+            if (inCjkLine && next === '' && prev !== '' && !puIsAsciiLetter(prev)) { i = emit('？', i, 1); continue; }
+            break;
+          case '!':
+            if (prevCjk || (inCjkLine && !puIsAsciiLetter(prev))) { i = emit('！', i, 1); continue; }
+            break;
+          case '.':
+            if (puIsDigit(prev) || puIsDigit(next)) break;
+            if (puIsAsciiLetter(prev) && mask[i - 1] !== 1) break; // 英文句号
+            if (next === '' || next === '\n' || next === '\r' || nextCjk || next === '"' || next === '”' || next === '）' || next === '」') {
+              if (inCjkLine) { i = emit('。', i, 1); continue; }
+            }
+            break;
+          case '"':
+            if (options.quotes === false) break;
+            if (prevCjk || nextCjk || prev === '' || PU_OPEN_BEFORE.has(prev)) {
+              out.push(quoteOpen ? '”' : '“');
+              quoteOpen = !quoteOpen;
+              changes += 1;
+              i += 1;
+              continue;
+            }
+            break;
+          case '\'':
+            if (options.quotes === false) break;
+            if (puIsAsciiLetter(prev) || puIsAsciiLetter(next)) break;
+            if (prevCjk || nextCjk) {
+              out.push(singleOpen ? '’' : '‘');
+              singleOpen = !singleOpen;
+              changes += 1;
+              i += 1;
+              continue;
+            }
+            break;
+          case '(':
+            if (nextCjk || prevCjk) { i = emit('（', i, 1); continue; }
+            break;
+          case ')':
+            if (prevCjk || nextCjk) { i = emit('）', i, 1); continue; }
+            break;
+          default:
+            break;
+        }
+
+        out.push(ch);
+        i += 1;
+      }
+
+      return { text: out.join(''), changes };
+    }
+
+    /** 只返回规范化后的文本。 */
+    function normalizeText(input, options = {}) {
+      return normalizePunctuation(input, options).text;
+    }
+
     // ---- src/layout.mjs ----
     /**
      * Layout for Format Studio: maps parsed blocks onto a preset's styles.
@@ -649,8 +893,8 @@ window.__ModuleLoader__.load({
       return preset.styles[kind] || preset.styles.body;
     }
 
-    function runsFor(block, style) {
-      if (block.label) {
+    function runsFor(block, style, useLabels) {
+      if (useLabels && block.label) {
         return [
           { text: block.label, bold: true },
           { text: block.text, bold: false },
@@ -663,6 +907,7 @@ window.__ModuleLoader__.load({
     function layoutBlocks(blocks, stats, preset, options = {}) {
       const paragraphs = [];
       const hasTitle = blocks.some((b) => b.kind === 'title');
+      const useLabels = options.labels !== false;
 
       for (let i = 0; i < blocks.length; i += 1) {
         const block = blocks[i];
@@ -688,7 +933,7 @@ window.__ModuleLoader__.load({
         // A leading heading must not carry leading space.
         if (HEADING_KINDS.includes(block.kind) && i === 0) style.before = 0;
 
-        paragraphs.push({ kind: block.kind, style, runs: runsFor(block, style) });
+        paragraphs.push({ kind: block.kind, style, runs: runsFor(block, style, useLabels) });
       }
 
       // Title fallback: if the preset expects a title and none was detected but the
@@ -708,11 +953,16 @@ window.__ModuleLoader__.load({
       const titleBlock = blocks.find((b) => b.kind === 'title');
       const title = String(options.title || (titleBlock ? titleBlock.text : '') || '').trim();
 
+      // 页码样式：preset = 跟随格式，plain = 纯数字，none = 不显示
+      const footer = { ...preset.footer };
+      if (options.pageNumber === 'none') footer.enabled = false;
+      else if (options.pageNumber === 'plain') footer.format = 'plain';
+
       return {
         preset: { id: preset.id, name: preset.name, summary: preset.summary },
         page: preset.page,
         defaultFont: preset.styles.body.font,
-        footer: preset.footer,
+        footer,
         paragraphs,
         title,
         stats,
@@ -1110,16 +1360,41 @@ window.__ModuleLoader__.load({
      */
 
 
+    /** 默认选项：标点规范化开、自动标签开、页码跟随格式。 */
+    function normalizeOptions(options) {
+      const source = options && typeof options === 'object' ? options : {};
+      return {
+        punctuation: source.punctuation !== false,
+        labels: source.labels !== false,
+        pageNumber: source.pageNumber || 'preset',
+        quotes: source.quotes !== false,
+      };
+    }
+
     /**
      * Format a document: parse, lay out and render .docx bytes.
-     * @param {{ text: string, preset?: string, scenario?: string, title?: string }} input
+     * @param {{ text: string, preset?: string, scenario?: string, title?: string, options?: object }} input
      */
     function formatDocument(input) {
+      const options = normalizeOptions(input.options);
       const raw = String(input.text || '');
       if (raw.trim().length === 0) throw new Error('正文为空：请先粘贴需要整理格式的文字');
+
+      let text = raw;
+      let punctuationChanges = 0;
+      if (options.punctuation) {
+        const normalized = normalizePunctuation(raw, { quotes: options.quotes });
+        text = normalized.text;
+        punctuationChanges = normalized.changes;
+      }
+
       const resolved = resolvePreset(input.preset, input.scenario);
       const preset = resolved.preset;
-      const { blocks, stats, layout } = formatText(raw, preset, { title: input.title });
+      const { blocks, stats, layout } = formatText(text, preset, {
+        title: input.title,
+        labels: options.labels,
+        pageNumber: options.pageNumber,
+      });
       const bytes = buildDocx(layout);
       return {
         presetId: preset.id,
@@ -1132,13 +1407,25 @@ window.__ModuleLoader__.load({
         layout,
         bytes,
         pages: estimatePages(layout),
+        punctuationChanges,
+        finalText: text,
+        options,
       };
     }
 
     /** Preview-only pass (no bytes), used for the live panel readout. */
     function previewDocument(input) {
+      const options = normalizeOptions(input.options);
+      const raw = String(input.text || '');
+      let text = raw;
+      let punctuationChanges = 0;
+      if (options.punctuation && raw.length > 0) {
+        const normalized = normalizePunctuation(raw, { quotes: options.quotes });
+        text = normalized.text;
+        punctuationChanges = normalized.changes;
+      }
       const resolved = resolvePreset(input.preset, input.scenario);
-      const { blocks, stats } = parseDocument(String(input.text || ''), { family: resolved.preset.family });
+      const { blocks, stats } = parseDocument(text, { family: resolved.preset.family });
       return {
         presetId: resolved.preset.id,
         presetName: resolved.preset.name,
@@ -1148,6 +1435,9 @@ window.__ModuleLoader__.load({
         blocks,
         stats,
         outline: describeBlocks(blocks),
+        punctuationChanges,
+        finalText: text,
+        options,
       };
     }
 
@@ -1182,7 +1472,13 @@ window.__ModuleLoader__.load({
       const useCallback = React.useCallback;
 
       const STYLE_ID = 'dsh-format-studio-style';
-      const STORAGE_KEYS = { open: 'dsh.formatStudio.open', preset: 'dsh.formatStudio.preset' };
+      const STORAGE_KEYS = {
+        open: 'dsh.formatStudio.open',
+        preset: 'dsh.formatStudio.preset',
+        punctuation: 'dsh.formatStudio.punctuation',
+        labels: 'dsh.formatStudio.labels',
+        pageNumber: 'dsh.formatStudio.pageNumber',
+      };
 
       const CSS = `
     .dsh-fs { font-size: 12px; color: var(--dsw-alias-label-primary); line-height: 1.5; }
@@ -1220,6 +1516,10 @@ window.__ModuleLoader__.load({
     .dsh-fs-tag { flex: none; padding: 0 5px; border-radius: 4px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); font-size: 10px; line-height: 16px; }
     .dsh-fs-outline-text { color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .dsh-fs-meta { display: flex; flex-wrap: wrap; gap: 10px; color: var(--dsw-alias-label-secondary); font-size: 11px; }
+    .dsh-fs-options { gap: 12px; align-items: center; }
+    .dsh-fs-check { display: inline-flex; align-items: center; gap: 4px; color: var(--dsw-alias-label-primary); cursor: pointer; }
+    .dsh-fs-check input { margin: 0; cursor: pointer; }
+    .dsh-fs-select { padding: 3px 6px; border-radius: 6px; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
     `;
 
       function readStored(key, fallback) {
@@ -1352,15 +1652,20 @@ window.__ModuleLoader__.load({
         const [text, setText] = useState('');
         const [status, setStatus] = useState(null);
         const [showOutline, setShowOutline] = useState(false);
+        const [punctuation, setPunctuation] = useState(() => readStored(STORAGE_KEYS.punctuation, '1') !== '0');
+        const [labels, setLabels] = useState(() => readStored(STORAGE_KEYS.labels, '1') !== '0');
+        const [pageNumber, setPageNumber] = useState(() => readStored(STORAGE_KEYS.pageNumber, 'preset'));
+
+        const options = { punctuation, labels, pageNumber };
 
         const preview = useMemo(() => {
           if (text.trim().length === 0) return null;
           try {
-            return previewDocument({ text, preset, scenario });
+            return previewDocument({ text, preset, scenario, options });
           } catch (error) {
             return { error: String((error && error.message) || error) };
           }
-        }, [text, preset, scenario]);
+        }, [text, preset, scenario, punctuation, labels, pageNumber]);
 
         const toggleOpen = useCallback(() => {
           setOpen((value) => {
@@ -1383,7 +1688,7 @@ window.__ModuleLoader__.load({
             return;
           }
           try {
-            const result = formatDocument({ text, preset, scenario, title });
+            const result = formatDocument({ text, preset, scenario, title, options });
             const fileName = suggestedFileName(result.presetName, result.layout.title);
             triggerDownload(result.bytes, fileName);
             const counts = result.stats;
@@ -1391,13 +1696,14 @@ window.__ModuleLoader__.load({
               kind: 'ok',
               message:
                 `已生成 ${fileName}\n格式：${result.presetName}（${result.matched ? result.reason : '手动指定'}）` +
-                `｜段落 ${counts.paragraphs} 个｜标题 ${counts.headings} 个｜约 ${result.pages} 页\n` +
-                '文件已开始下载，打开后即为排版好的 Word 文档。',
+                `｜段落 ${counts.paragraphs} 个｜标题 ${counts.headings} 个｜约 ${result.pages} 页` +
+                (result.punctuationChanges > 0 ? `\n已规范 ${result.punctuationChanges} 处标点` : '') +
+                '\n文件已开始下载，打开后即为排版好的 Word 文档。',
             });
           } catch (error) {
             setStatus({ kind: 'error', message: `生成失败：${String((error && error.message) || error)}` });
           }
-        }, [text, preset, scenario, title]);
+        }, [text, preset, scenario, title, punctuation, labels, pageNumber]);
 
         const onCopyText = useCallback(async () => {
           if (text.trim().length === 0) {
@@ -1405,7 +1711,7 @@ window.__ModuleLoader__.load({
             return;
           }
           try {
-            const result = formatDocument({ text, preset, scenario, title });
+            const result = formatDocument({ text, preset, scenario, title, options });
             const ok = await copyText(toPlainText(result.layout));
             setStatus(ok
               ? { kind: 'ok', message: '已复制整理后的纯文本（含首行缩进），可直接粘贴到任意编辑器。' }
@@ -1426,7 +1732,7 @@ window.__ModuleLoader__.load({
           const prompt = [
             '请用 format_document 工具把下面这段全文整理成标准版式的 Word 文档，并保存到当前工作目录。',
             presetLine,
-            '要求：只调整结构与版式（标题层级、字体字号、行距、缩进、对齐、页码、落款位置），不要改写、删减或摘要正文内容。完成后告诉我生成的文件路径。',
+            '要求：只调整结构与版式（标题层级、字体字号、行距、缩进、对齐、页码、落款位置），并把半角标点统一成中文全角，不要改写、删减或摘要正文内容。完成后告诉我生成的文件路径。',
             '',
             '===== 原文开始 =====',
             text,
@@ -1457,9 +1763,9 @@ window.__ModuleLoader__.load({
         h('span', { className: 'dsh-fs-toggle-title' }, '排版工作台'),
         h('span', { className: 'dsh-fs-toggle-sub' },
           text.trim().length > 0
-            ? `${currentPresetName} · ${characters} 字`
-            : '粘贴全文 → 选格式 → 一键生成 Word'),
-        h('span', { className: 'dsh-fs-toggle-chev' }, open ? '▲' : '▼')));
+            ? `${currentPresetName}，${characters} 字`
+            : '粘贴全文，选格式，一键生成 Word'),
+        h('span', { className: 'dsh-fs-toggle-chev' }, open ? '收起' : '展开')));
 
         if (open) {
           const panel = [];
@@ -1500,11 +1806,37 @@ window.__ModuleLoader__.load({
             spellCheck: false,
           }));
 
+          // 排版选项：标点规范化 / 自动标签 / 页码样式
+          panel.push(h('div', { key: 'options', className: 'dsh-fs-row dsh-fs-options' },
+            h('label', { className: 'dsh-fs-check' },
+              h('input', {
+                type: 'checkbox',
+                checked: punctuation,
+                onChange: (event) => { setPunctuation(event.target.checked); store(STORAGE_KEYS.punctuation, event.target.checked ? '1' : '0'); },
+              }),
+              '中文标点规范化'),
+            h('label', { className: 'dsh-fs-check' },
+              h('input', {
+                type: 'checkbox',
+                checked: labels,
+                onChange: (event) => { setLabels(event.target.checked); store(STORAGE_KEYS.labels, event.target.checked ? '1' : '0'); },
+              }),
+              '自动补摘要关键词标签'),
+            h('span', { className: 'dsh-fs-hint' }, '页码'),
+            h('select', {
+              className: 'dsh-fs-select',
+              value: pageNumber,
+              onChange: (event) => { setPageNumber(event.target.value); store(STORAGE_KEYS.pageNumber, event.target.value); },
+            },
+              h('option', { value: 'preset' }, '跟随格式'),
+              h('option', { value: 'plain' }, '纯数字'),
+              h('option', { value: 'none' }, '不显示'))));
+
           panel.push(h('div', { key: 'meta', className: 'dsh-fs-row' },
             h('span', { className: 'dsh-fs-hint' },
               characters > 0
-                ? `${characters} 字符${preview && preview.presetName ? ` · 将按「${preview.presetName}」排版` : ''}${preview && preview.matched === false ? ' · 未识别场景，用通用格式' : ''}`
-                : '支持整篇粘贴，不会改动任何文字内容。'),
+                ? `${characters} 字符${preview && preview.presetName ? `，将按「${preview.presetName}」排版` : ''}${preview && preview.matched === false ? '，未识别场景，用通用格式' : ''}${punctuation && preview && preview.punctuationChanges > 0 ? `，已规范 ${preview.punctuationChanges} 处标点` : ''}`
+                : '支持整篇粘贴；标点规范化只改标点，不改字词。'),
             h('span', { className: 'dsh-fs-hint', style: { flex: 1 } }),
             h('button', { type: 'button', className: 'dsh-fs-btn dsh-fs-btn-link', onClick: () => { setText(SAMPLE); setPreset('gov'); store(STORAGE_KEYS.preset, 'gov'); setStatus(null); } }, '填入示例'),
             h('button', { type: 'button', className: 'dsh-fs-btn dsh-fs-btn-link', onClick: () => { setText(''); setStatus(null); } }, '清空')));

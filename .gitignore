@@ -3,6 +3,7 @@ dist/
 test/out/
 test/out-cli/
 test/out-desktop/
+test/out-messy/
 test/*.json
 test/*.log
 test/gui-*.png

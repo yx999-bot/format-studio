@@ -131,6 +131,20 @@ namespace FormatStudio
         }
     }
 
+    /// <summary>排版选项：标点规范化、自动标签、页码样式。</summary>
+    internal sealed class FormatOptions
+    {
+        public bool Punctuation = true;
+        public bool Labels = true;
+        public bool Quotes = true;
+        public string PageNumber = "preset";
+
+        public static FormatOptions Defaults()
+        {
+            return new FormatOptions();
+        }
+    }
+
     internal sealed class LayoutDoc
     {
         public Preset Preset;

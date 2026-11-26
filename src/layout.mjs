@@ -15,8 +15,8 @@ function styleFor(preset, kind) {
   return preset.styles[kind] || preset.styles.body;
 }
 
-function runsFor(block, style) {
-  if (block.label) {
+function runsFor(block, style, useLabels) {
+  if (useLabels && block.label) {
     return [
       { text: block.label, bold: true },
       { text: block.text, bold: false },
@@ -29,6 +29,7 @@ function runsFor(block, style) {
 export function layoutBlocks(blocks, stats, preset, options = {}) {
   const paragraphs = [];
   const hasTitle = blocks.some((b) => b.kind === 'title');
+  const useLabels = options.labels !== false;
 
   for (let i = 0; i < blocks.length; i += 1) {
     const block = blocks[i];
@@ -54,7 +55,7 @@ export function layoutBlocks(blocks, stats, preset, options = {}) {
     // A leading heading must not carry leading space.
     if (HEADING_KINDS.includes(block.kind) && i === 0) style.before = 0;
 
-    paragraphs.push({ kind: block.kind, style, runs: runsFor(block, style) });
+    paragraphs.push({ kind: block.kind, style, runs: runsFor(block, style, useLabels) });
   }
 
   // Title fallback: if the preset expects a title and none was detected but the
@@ -74,11 +75,16 @@ export function layoutBlocks(blocks, stats, preset, options = {}) {
   const titleBlock = blocks.find((b) => b.kind === 'title');
   const title = String(options.title || (titleBlock ? titleBlock.text : '') || '').trim();
 
+  // 页码样式：preset = 跟随格式，plain = 纯数字，none = 不显示
+  const footer = { ...preset.footer };
+  if (options.pageNumber === 'none') footer.enabled = false;
+  else if (options.pageNumber === 'plain') footer.format = 'plain';
+
   return {
     preset: { id: preset.id, name: preset.name, summary: preset.summary },
     page: preset.page,
     defaultFont: preset.styles.body.font,
-    footer: preset.footer,
+    footer,
     paragraphs,
     title,
     stats,

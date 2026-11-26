@@ -155,13 +155,20 @@ namespace FormatStudio
             return true;
         }
 
-        private static string NumberedKind(string para)
+        /// <summary>编号标题判定：返回标题类型，并给出编号之后的剩余长度。</summary>
+        private static string NumberedKind(string para, out int restLength)
         {
-            if (Chapter.IsMatch(para)) return "h1";
-            if (H1.IsMatch(para)) return "h1";
-            if (H2.IsMatch(para)) return "h2";
-            if (H4.IsMatch(para)) return "h4";
-            if (H3.IsMatch(para) && para.Length <= 60) return "h3";
+            restLength = 0;
+            Match match = Chapter.Match(para);
+            if (match.Success) { restLength = match.Groups[2].Value.Length; return "h1"; }
+            match = H1.Match(para);
+            if (match.Success) { restLength = match.Groups[2].Value.Length; return "h1"; }
+            match = H2.Match(para);
+            if (match.Success) { restLength = match.Groups[2].Value.Length; return "h2"; }
+            match = H4.Match(para);
+            if (match.Success) { restLength = match.Groups[2].Value.Length; return "h4"; }
+            match = H3.Match(para);
+            if (match.Success) { restLength = match.Groups[2].Value.Length; return "h3"; }
             return null;
         }
 
@@ -175,7 +182,7 @@ namespace FormatStudio
             bool sawAbstract = false;
             bool sawKeywords = false;
             bool refMode = false;
-            const int InlineHeadingMax = 40;
+            const int HeadingRestMax = 20;
 
             for (int i = 0; i < total; i++)
             {
@@ -258,10 +265,11 @@ namespace FormatStudio
                     continue;
                 }
 
-                string numbered = NumberedKind(para);
+                int headingRest;
+                string numbered = NumberedKind(para, out headingRest);
                 if (numbered != null)
                 {
-                    if (para.Length <= InlineHeadingMax)
+                    if (headingRest <= HeadingRestMax)
                     {
                         Block block = new Block();
                         block.Kind = numbered;
@@ -346,7 +354,8 @@ namespace FormatStudio
                 {
                     Block block = new Block();
                     block.Kind = "list";
-                    block.Text = "· " + bullet.Groups[1].Value;
+                    // 保留原文，不额外插入「·」之类的符号
+                    block.Text = para;
                     blocks.Add(block);
                     continue;
                 }

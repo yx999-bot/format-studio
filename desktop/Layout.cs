@@ -12,16 +12,27 @@ namespace FormatStudio
 
         public static LayoutDoc Build(string text, Preset preset, string titleOverride)
         {
-            return BuildFrom(Parser.Parse(text), preset, titleOverride);
+            return Build(text, preset, titleOverride, FormatOptions.Defaults());
+        }
+
+        public static LayoutDoc Build(string text, Preset preset, string titleOverride, FormatOptions options)
+        {
+            return BuildFrom(Parser.Parse(text), preset, titleOverride, options);
         }
 
         public static LayoutDoc BuildFrom(ParseResult parsed, Preset preset, string titleOverride)
         {
+            return BuildFrom(parsed, preset, titleOverride, FormatOptions.Defaults());
+        }
+
+        public static LayoutDoc BuildFrom(ParseResult parsed, Preset preset, string titleOverride, FormatOptions options)
+        {
+            FormatOptions resolved = options ?? FormatOptions.Defaults();
             LayoutDoc doc = new LayoutDoc();
             doc.Preset = preset;
             doc.Paragraphs = new List<Para>();
             doc.DefaultFont = preset.Body.Font.Clone();
-            doc.Footer = preset.Footer;
+            doc.Footer = CopyFooter(preset.Footer, resolved);
             doc.CharacterCount = parsed.CharacterCount;
             doc.ParagraphCount = parsed.ParagraphCount;
             doc.HeadingCount = parsed.HeadingCount;
@@ -51,7 +62,7 @@ namespace FormatStudio
                 Para para = new Para();
                 para.Kind = block.Kind;
                 para.Style = style;
-                if (!string.IsNullOrEmpty(block.Label))
+                if (!string.IsNullOrEmpty(block.Label) && resolved.Labels)
                 {
                     Run labelRun = new Run();
                     labelRun.Text = block.Label;
@@ -103,6 +114,20 @@ namespace FormatStudio
         private static bool IsHeading(string kind)
         {
             return kind == "h1" || kind == "h2" || kind == "h3" || kind == "h4";
+        }
+
+        /// <summary>页码样式：preset 跟随格式，plain 纯数字，none 不显示。</summary>
+        private static FooterSpec CopyFooter(FooterSpec source, FormatOptions options)
+        {
+            FooterSpec footer = new FooterSpec();
+            footer.Enabled = source.Enabled;
+            footer.Size = source.Size;
+            footer.EastAsia = source.EastAsia;
+            footer.Latin = source.Latin;
+            footer.Format = source.Format;
+            if (options.PageNumber == "none") footer.Enabled = false;
+            else if (options.PageNumber == "plain") footer.Format = "plain";
+            return footer;
         }
 
         private static readonly Dictionary<string, string> Labels = new Dictionary<string, string>

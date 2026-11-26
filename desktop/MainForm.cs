@@ -16,6 +16,9 @@ namespace FormatStudio
         private Label statusLabel;
         private Button openButton;
         private Timer statusTimer;
+        private CheckBox punctuationBox;
+        private CheckBox labelsBox;
+        private ComboBox pageNumberBox;
         private string lastOutput = "";
 
         private static readonly Color Accent = Color.FromArgb(31, 95, 191);
@@ -61,7 +64,7 @@ namespace FormatStudio
             root.RowCount = 5;
             root.Padding = new Padding(18, 14, 18, 10);
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 136));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
@@ -80,13 +83,14 @@ namespace FormatStudio
             grid.Dock = DockStyle.Fill;
             grid.Margin = new Padding(0);
             grid.ColumnCount = 4;
-            grid.RowCount = 2;
+            grid.RowCount = 3;
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 236));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
 
             presetBox = new ComboBox();
             presetBox.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -113,6 +117,50 @@ namespace FormatStudio
             grid.Controls.Add(MakeLabel("文档标题"), 0, 1);
             grid.Controls.Add(titleBox, 1, 1);
             grid.SetColumnSpan(titleBox, 3);
+
+            // 排版选项：标点规范化 / 自动标签 / 页码样式
+            FlowLayoutPanel options = new FlowLayoutPanel();
+            options.Dock = DockStyle.Fill;
+            options.Margin = new Padding(0, 6, 0, 0);
+            options.WrapContents = false;
+            options.FlowDirection = FlowDirection.LeftToRight;
+
+            punctuationBox = new CheckBox();
+            punctuationBox.Text = "中文标点规范化";
+            punctuationBox.Checked = true;
+            punctuationBox.AutoSize = true;
+            punctuationBox.Margin = new Padding(0, 4, 16, 0);
+            punctuationBox.ForeColor = Ink;
+
+            labelsBox = new CheckBox();
+            labelsBox.Text = "自动补摘要关键词标签";
+            labelsBox.Checked = true;
+            labelsBox.AutoSize = true;
+            labelsBox.Margin = new Padding(0, 4, 16, 0);
+            labelsBox.ForeColor = Ink;
+
+            Label pageLabel = new Label();
+            pageLabel.Text = "页码";
+            pageLabel.AutoSize = true;
+            pageLabel.Margin = new Padding(0, 7, 6, 0);
+            pageLabel.ForeColor = Muted;
+
+            pageNumberBox = new ComboBox();
+            pageNumberBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            pageNumberBox.Width = 116;
+            pageNumberBox.Margin = new Padding(0, 3, 0, 0);
+            pageNumberBox.Items.Add("跟随格式");
+            pageNumberBox.Items.Add("纯数字");
+            pageNumberBox.Items.Add("不显示");
+            pageNumberBox.SelectedIndex = 0;
+
+            options.Controls.Add(punctuationBox);
+            options.Controls.Add(labelsBox);
+            options.Controls.Add(pageLabel);
+            options.Controls.Add(pageNumberBox);
+            grid.Controls.Add(MakeLabel("排版选项"), 0, 2);
+            grid.Controls.Add(options, 1, 2);
+            grid.SetColumnSpan(options, 3);
             return grid;
         }
 
@@ -247,6 +295,18 @@ namespace FormatStudio
             return index - 1 < Presets.All.Count ? Presets.All[index - 1].Id : "auto";
         }
 
+        /// <summary>界面上勾选的排版选项。</summary>
+        private FormatOptions CurrentOptions()
+        {
+            FormatOptions options = new FormatOptions();
+            options.Punctuation = punctuationBox == null || punctuationBox.Checked;
+            options.Labels = labelsBox == null || labelsBox.Checked;
+            if (pageNumberBox != null && pageNumberBox.SelectedIndex == 1) options.PageNumber = "plain";
+            else if (pageNumberBox != null && pageNumberBox.SelectedIndex == 2) options.PageNumber = "none";
+            else options.PageNumber = "preset";
+            return options;
+        }
+
         private void ScheduleStatus()
         {
             if (statusTimer == null) return;
@@ -260,7 +320,7 @@ namespace FormatStudio
             if (text.Trim().Length == 0)
             {
                 statusLabel.ForeColor = Muted;
-                statusLabel.Text = "① 粘贴全文　② 选格式或填场景　③ 点「生成 Word 文档」，再选择保存位置即可";
+                statusLabel.Text = "先粘贴全文，再选择格式或填写场景，然后点「生成 Word 文档」并选择保存位置。";
                 return;
             }
             ResolvedPreset resolved = Engine.Resolve(CurrentPresetId(), scenarioBox.Text);
@@ -281,7 +341,8 @@ namespace FormatStudio
             try
             {
                 ResolvedPreset resolved = Engine.Resolve(CurrentPresetId(), scenarioBox.Text);
-                LayoutDoc doc = Layouter.Build(text, resolved.Preset, titleBox.Text.Trim());
+                int punctuationChanges;
+                LayoutDoc doc = Engine.Compose(text, CurrentPresetId(), scenarioBox.Text, titleBox.Text.Trim(), CurrentOptions(), out punctuationChanges);
                 string suggested = Engine.SuggestedFileName(doc);
                 using (SaveFileDialog dialog = new SaveFileDialog())
                 {
@@ -298,7 +359,7 @@ namespace FormatStudio
                     lastOutput = dialog.FileName;
                     openButton.Enabled = true;
                     statusLabel.ForeColor = Color.FromArgb(20, 120, 60);
-                    statusLabel.Text = string.Format("已保存：{0}（{1}，约 {2} 页）", dialog.FileName, resolved.Preset.Name, Layouter.EstimatePages(doc));
+                    statusLabel.Text = string.Format("已保存：{0}（{1}，约 {2} 页）{3}", dialog.FileName, resolved.Preset.Name, Layouter.EstimatePages(doc), punctuationChanges > 0 ? string.Format("，已规范 {0} 处标点", punctuationChanges) : "");
                     DialogResult open = MessageBox.Show(this,
                         "文档已生成：\n" + dialog.FileName + "\n\n现在打开看看吗？",
                         "生成成功", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
@@ -320,8 +381,8 @@ namespace FormatStudio
             }
             try
             {
-                ResolvedPreset resolved = Engine.Resolve(CurrentPresetId(), scenarioBox.Text);
-                LayoutDoc doc = Layouter.Build(editor.Text, resolved.Preset, titleBox.Text.Trim());
+                int punctuationChanges;
+                LayoutDoc doc = Engine.Compose(editor.Text, CurrentPresetId(), scenarioBox.Text, titleBox.Text.Trim(), CurrentOptions(), out punctuationChanges);
                 Clipboard.SetText(Layouter.ToPlainText(doc));
                 statusLabel.ForeColor = Color.FromArgb(20, 120, 60);
                 statusLabel.Text = "已复制整理后的纯文本（含首行缩进），可直接粘贴到任意编辑器。";
@@ -339,7 +400,10 @@ namespace FormatStudio
                 MessageBox.Show(this, "请先粘贴或打开需要整理格式的全文。", "还没有内容", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
-            ParseResult parsed = Parser.Parse(editor.Text);
+            FormatOptions options = CurrentOptions();
+            string previewText = editor.Text;
+            if (options.Punctuation) previewText = Punctuation.Normalize(previewText, options.Quotes).Text;
+            ParseResult parsed = Parser.Parse(previewText);
             System.Collections.Generic.List<string[]> rows = Layouter.Describe(parsed.Blocks);
 
             Form window = new Form();

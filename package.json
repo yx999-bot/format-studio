@@ -1,6 +1,6 @@
 {
   "name": "@local/format-studio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Format Studio: paste a full text, pick a Chinese document format (paper, government document, report, news, proposal, letter, resume) and generate a properly typeset Word file.",

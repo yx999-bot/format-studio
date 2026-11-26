@@ -14,7 +14,13 @@ export function createClientApp(React) {
   const useCallback = React.useCallback;
 
   const STYLE_ID = 'dsh-format-studio-style';
-  const STORAGE_KEYS = { open: 'dsh.formatStudio.open', preset: 'dsh.formatStudio.preset' };
+  const STORAGE_KEYS = {
+    open: 'dsh.formatStudio.open',
+    preset: 'dsh.formatStudio.preset',
+    punctuation: 'dsh.formatStudio.punctuation',
+    labels: 'dsh.formatStudio.labels',
+    pageNumber: 'dsh.formatStudio.pageNumber',
+  };
 
   const CSS = `
 .dsh-fs { font-size: 12px; color: var(--dsw-alias-label-primary); line-height: 1.5; }
@@ -52,6 +58,10 @@ export function createClientApp(React) {
 .dsh-fs-tag { flex: none; padding: 0 5px; border-radius: 4px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); font-size: 10px; line-height: 16px; }
 .dsh-fs-outline-text { color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dsh-fs-meta { display: flex; flex-wrap: wrap; gap: 10px; color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.dsh-fs-options { gap: 12px; align-items: center; }
+.dsh-fs-check { display: inline-flex; align-items: center; gap: 4px; color: var(--dsw-alias-label-primary); cursor: pointer; }
+.dsh-fs-check input { margin: 0; cursor: pointer; }
+.dsh-fs-select { padding: 3px 6px; border-radius: 6px; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
 `;
 
   function readStored(key, fallback) {
@@ -184,15 +194,20 @@ export function createClientApp(React) {
     const [text, setText] = useState('');
     const [status, setStatus] = useState(null);
     const [showOutline, setShowOutline] = useState(false);
+    const [punctuation, setPunctuation] = useState(() => readStored(STORAGE_KEYS.punctuation, '1') !== '0');
+    const [labels, setLabels] = useState(() => readStored(STORAGE_KEYS.labels, '1') !== '0');
+    const [pageNumber, setPageNumber] = useState(() => readStored(STORAGE_KEYS.pageNumber, 'preset'));
+
+    const options = { punctuation, labels, pageNumber };
 
     const preview = useMemo(() => {
       if (text.trim().length === 0) return null;
       try {
-        return previewDocument({ text, preset, scenario });
+        return previewDocument({ text, preset, scenario, options });
       } catch (error) {
         return { error: String((error && error.message) || error) };
       }
-    }, [text, preset, scenario]);
+    }, [text, preset, scenario, punctuation, labels, pageNumber]);
 
     const toggleOpen = useCallback(() => {
       setOpen((value) => {
@@ -215,7 +230,7 @@ export function createClientApp(React) {
         return;
       }
       try {
-        const result = formatDocument({ text, preset, scenario, title });
+        const result = formatDocument({ text, preset, scenario, title, options });
         const fileName = suggestedFileName(result.presetName, result.layout.title);
         triggerDownload(result.bytes, fileName);
         const counts = result.stats;
@@ -223,13 +238,14 @@ export function createClientApp(React) {
           kind: 'ok',
           message:
             `已生成 ${fileName}\n格式：${result.presetName}（${result.matched ? result.reason : '手动指定'}）` +
-            `｜段落 ${counts.paragraphs} 个｜标题 ${counts.headings} 个｜约 ${result.pages} 页\n` +
-            '文件已开始下载，打开后即为排版好的 Word 文档。',
+            `｜段落 ${counts.paragraphs} 个｜标题 ${counts.headings} 个｜约 ${result.pages} 页` +
+            (result.punctuationChanges > 0 ? `\n已规范 ${result.punctuationChanges} 处标点` : '') +
+            '\n文件已开始下载，打开后即为排版好的 Word 文档。',
         });
       } catch (error) {
         setStatus({ kind: 'error', message: `生成失败：${String((error && error.message) || error)}` });
       }
-    }, [text, preset, scenario, title]);
+    }, [text, preset, scenario, title, punctuation, labels, pageNumber]);
 
     const onCopyText = useCallback(async () => {
       if (text.trim().length === 0) {
@@ -237,7 +253,7 @@ export function createClientApp(React) {
         return;
       }
       try {
-        const result = formatDocument({ text, preset, scenario, title });
+        const result = formatDocument({ text, preset, scenario, title, options });
         const ok = await copyText(toPlainText(result.layout));
         setStatus(ok
           ? { kind: 'ok', message: '已复制整理后的纯文本（含首行缩进），可直接粘贴到任意编辑器。' }
@@ -258,7 +274,7 @@ export function createClientApp(React) {
       const prompt = [
         '请用 format_document 工具把下面这段全文整理成标准版式的 Word 文档，并保存到当前工作目录。',
         presetLine,
-        '要求：只调整结构与版式（标题层级、字体字号、行距、缩进、对齐、页码、落款位置），不要改写、删减或摘要正文内容。完成后告诉我生成的文件路径。',
+        '要求：只调整结构与版式（标题层级、字体字号、行距、缩进、对齐、页码、落款位置），并把半角标点统一成中文全角，不要改写、删减或摘要正文内容。完成后告诉我生成的文件路径。',
         '',
         '===== 原文开始 =====',
         text,
@@ -289,9 +305,9 @@ export function createClientApp(React) {
     h('span', { className: 'dsh-fs-toggle-title' }, '排版工作台'),
     h('span', { className: 'dsh-fs-toggle-sub' },
       text.trim().length > 0
-        ? `${currentPresetName} · ${characters} 字`
-        : '粘贴全文 → 选格式 → 一键生成 Word'),
-    h('span', { className: 'dsh-fs-toggle-chev' }, open ? '▲' : '▼')));
+        ? `${currentPresetName}，${characters} 字`
+        : '粘贴全文，选格式，一键生成 Word'),
+    h('span', { className: 'dsh-fs-toggle-chev' }, open ? '收起' : '展开')));
 
     if (open) {
       const panel = [];
@@ -332,11 +348,37 @@ export function createClientApp(React) {
         spellCheck: false,
       }));
 
+      // 排版选项：标点规范化 / 自动标签 / 页码样式
+      panel.push(h('div', { key: 'options', className: 'dsh-fs-row dsh-fs-options' },
+        h('label', { className: 'dsh-fs-check' },
+          h('input', {
+            type: 'checkbox',
+            checked: punctuation,
+            onChange: (event) => { setPunctuation(event.target.checked); store(STORAGE_KEYS.punctuation, event.target.checked ? '1' : '0'); },
+          }),
+          '中文标点规范化'),
+        h('label', { className: 'dsh-fs-check' },
+          h('input', {
+            type: 'checkbox',
+            checked: labels,
+            onChange: (event) => { setLabels(event.target.checked); store(STORAGE_KEYS.labels, event.target.checked ? '1' : '0'); },
+          }),
+          '自动补摘要关键词标签'),
+        h('span', { className: 'dsh-fs-hint' }, '页码'),
+        h('select', {
+          className: 'dsh-fs-select',
+          value: pageNumber,
+          onChange: (event) => { setPageNumber(event.target.value); store(STORAGE_KEYS.pageNumber, event.target.value); },
+        },
+          h('option', { value: 'preset' }, '跟随格式'),
+          h('option', { value: 'plain' }, '纯数字'),
+          h('option', { value: 'none' }, '不显示'))));
+
       panel.push(h('div', { key: 'meta', className: 'dsh-fs-row' },
         h('span', { className: 'dsh-fs-hint' },
           characters > 0
-            ? `${characters} 字符${preview && preview.presetName ? ` · 将按「${preview.presetName}」排版` : ''}${preview && preview.matched === false ? ' · 未识别场景，用通用格式' : ''}`
-            : '支持整篇粘贴，不会改动任何文字内容。'),
+            ? `${characters} 字符${preview && preview.presetName ? `，将按「${preview.presetName}」排版` : ''}${preview && preview.matched === false ? '，未识别场景，用通用格式' : ''}${punctuation && preview && preview.punctuationChanges > 0 ? `，已规范 ${preview.punctuationChanges} 处标点` : ''}`
+            : '支持整篇粘贴；标点规范化只改标点，不改字词。'),
         h('span', { className: 'dsh-fs-hint', style: { flex: 1 } }),
         h('button', { type: 'button', className: 'dsh-fs-btn dsh-fs-btn-link', onClick: () => { setText(SAMPLE); setPreset('gov'); store(STORAGE_KEYS.preset, 'gov'); setStatus(null); } }, '填入示例'),
         h('button', { type: 'button', className: 'dsh-fs-btn dsh-fs-btn-link', onClick: () => { setText(''); setStatus(null); } }, '清空')));

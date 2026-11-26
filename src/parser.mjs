@@ -196,20 +196,25 @@ function classify(paragraphs, options) {
 
     // Numbered headings. When the numbered line runs straight into body text
     // ("（一）加强组织领导。各区县……"), the whole paragraph is body text, not a
-    // heading; only short numbered lines count as headings.
-    const INLINE_HEADING_MAX = 40;
-    const numberedKind = (() => {
-      if (RE_CHAPTER.test(para)) return 'h1';
-      if (RE_H1.test(para)) return 'h1';
-      if (RE_H2.test(para)) return 'h2';
-      if (RE_H4.test(para)) return 'h4';
-      if (RE_H3.test(para) && para.length <= 60) return 'h3';
+    // heading: only a short remainder after the number counts as a heading.
+    const HEADING_REST_MAX = 20;
+    const numbered = (() => {
+      const chapter = para.match(RE_CHAPTER);
+      if (chapter) return { kind: 'h1', rest: chapter[2].length };
+      const h1 = para.match(RE_H1);
+      if (h1) return { kind: 'h1', rest: h1[2].length };
+      const h2 = para.match(RE_H2);
+      if (h2) return { kind: 'h2', rest: h2[2].length };
+      const h4 = para.match(RE_H4);
+      if (h4) return { kind: 'h4', rest: h4[2].length };
+      const h3 = para.match(RE_H3);
+      if (h3) return { kind: 'h3', rest: h3[2].length };
       return null;
     })();
-    if (numberedKind) {
-      if (para.length <= INLINE_HEADING_MAX) {
-        blocks.push({ kind: numberedKind, text: para });
-        if (numberedKind === 'h1' && !sawTitle) sawTitle = true;
+    if (numbered) {
+      if (numbered.rest <= HEADING_REST_MAX) {
+        blocks.push({ kind: numbered.kind, text: para });
+        if (numbered.kind === 'h1' && !sawTitle) sawTitle = true;
         continue;
       }
       blocks.push({ kind: 'body', text: para });
@@ -258,7 +263,8 @@ function classify(paragraphs, options) {
 
     const bullet = para.match(RE_BULLET);
     if (bullet) {
-      blocks.push({ kind: 'list', text: '· ' + bullet[1] });
+      // 保留原文，不额外插入「·」之类的符号（用户没打的东西不出现）
+      blocks.push({ kind: 'list', text: para });
       continue;
     }
 

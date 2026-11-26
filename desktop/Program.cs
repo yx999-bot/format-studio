@@ -12,9 +12,25 @@ namespace FormatStudio
     {
         public static LayoutDoc Compose(string text, string presetId, string scenario, string title)
         {
-            ResolvedPreset resolved = Presets.Resolve(presetId, scenario);
-            LayoutDoc doc = Layouter.Build(text, resolved.Preset, title);
-            doc.Preset = resolved.Preset;
+            int ignored;
+            return Compose(text, presetId, scenario, title, FormatOptions.Defaults(), out ignored);
+        }
+
+        /// <summary>标点规范化 + 版式装配；返回规范化后的文本长度变化数。</summary>
+        public static LayoutDoc Compose(string text, string presetId, string scenario, string title, FormatOptions options, out int punctuationChanges)
+        {
+            FormatOptions resolved = options ?? FormatOptions.Defaults();
+            string prepared = text ?? "";
+            punctuationChanges = 0;
+            if (resolved.Punctuation && prepared.Length > 0)
+            {
+                PunctuationResult normalized = Punctuation.Normalize(prepared, resolved.Quotes);
+                prepared = normalized.Text;
+                punctuationChanges = normalized.Changes;
+            }
+            ResolvedPreset presetInfo = Presets.Resolve(presetId, scenario);
+            LayoutDoc doc = Layouter.Build(prepared, presetInfo.Preset, title, resolved);
+            doc.Preset = presetInfo.Preset;
             return doc;
         }
 
@@ -153,10 +169,17 @@ namespace FormatStudio
             string output = Get(flags, "out", "");
             if (output.Length == 0) { Console.WriteLine("error: --out <file.docx> is required"); return 2; }
 
+            FormatOptions options = new FormatOptions();
+            options.Punctuation = !flags.ContainsKey("no-punctuation");
+            options.Labels = !flags.ContainsKey("no-labels");
+            string pageNumber = Get(flags, "page-number", "preset");
+            if (pageNumber == "plain" || pageNumber == "none" || pageNumber == "preset") options.PageNumber = pageNumber;
+
             try
             {
                 ResolvedPreset resolved = Engine.Resolve(presetId, scenario);
-                LayoutDoc doc = Layouter.Build(text, resolved.Preset, title);
+                int punctuationChanges;
+                LayoutDoc doc = Engine.Compose(text, presetId, scenario, title, options, out punctuationChanges);
                 byte[] bytes = Docx.Build(doc);
                 string directory = Path.GetDirectoryName(Path.GetFullPath(output));
                 if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
@@ -173,6 +196,7 @@ namespace FormatStudio
                 json.Append(",\"headings\":").Append(doc.HeadingCount);
                 json.Append(",\"characters\":").Append(doc.CharacterCount);
                 json.Append(",\"pages\":").Append(Layouter.EstimatePages(doc));
+                json.Append(",\"punctuationChanges\":").Append(punctuationChanges);
                 json.Append(",\"title\":").Append(Engine.Json(doc.Title)).Append("}");
                 Console.WriteLine(json.ToString());
                 return 0;
@@ -195,7 +219,8 @@ namespace FormatStudio
                 {
                     Preset preset = presets[i];
                     string text = Samples.For(preset.Id);
-                    LayoutDoc doc = Layouter.Build(text, preset, "");
+                    int punctuationChanges;
+                    LayoutDoc doc = Engine.Compose(text, preset.Id, "", "", FormatOptions.Defaults(), out punctuationChanges);
                     byte[] bytes = Docx.Build(doc);
                     string path = Path.Combine(outputDirectory, preset.Id + ".docx");
                     File.WriteAllBytes(path, bytes);

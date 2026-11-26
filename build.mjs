@@ -17,6 +17,7 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const SOURCES = [
   'src/presets.mjs',
   'src/parser.mjs',
+  'src/punctuation.mjs',
   'src/layout.mjs',
   'src/docx.mjs',
   'src/engine.mjs',
