@@ -19,9 +19,10 @@ Windows 独立版（约 94 KB，双击即用，不需要安装任何运行环境
 | 方式 | 链接 |
 | --- | --- |
 | GitHub Release（官方，.exe 直接下载） | <https://github.com/yx999-bot/format-studio/releases/download/v1.1.0/FormatStudio.exe> |
-| CDN 直链（国内访问更稳，zip 包） | <https://cdn.jsdelivr.net/gh/yx999-bot/format-studio@main/download/FormatStudio-win64.zip> |
+| CDN 直链 ①（zip 包） | <https://cdn.jsdelivr.net/gh/yx999-bot/format-studio@main/download/FormatStudio-win64.zip> |
+| CDN 直链 ②（备用，Cloudflare 线路） | <https://gcore.jsdelivr.net/gh/yx999-bot/format-studio@main/download/FormatStudio-win64.zip> |
 
-> zip 包下载后右键「全部解压缩」，双击里面的 `FormatStudio.exe` 即可（CDN 不服务 `.exe`，所以打包成 zip）。
+> 两个 CDN 直链是同一份文件，哪个能打开就用哪个。zip 包下载后右键「全部解压缩」，双击里面的 `FormatStudio.exe` 即可（CDN 不服务 `.exe`，所以打包成 zip）。
 
 SHA256（v1.1.0）：`3F6931BFECDAF51733D1946860478743B2D6EC4318BD7B2B3037AA6236532812`
 
